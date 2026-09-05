@@ -464,21 +464,27 @@ def normalize_contact(contact):
     if not isinstance(contact, dict):
         return None
 
-    company = contact.get(
-        "company",
-        {}
-    )
+    # ========================================================
+    # COMPANY
+    # ========================================================
+
+    company = contact.get("company", {})
 
     if not isinstance(company, dict):
         company = {}
 
-    location = contact.get(
-        "location",
-        {}
-    )
+    # ========================================================
+    # LOCATION
+    # ========================================================
+
+    location = contact.get("location", {})
 
     if not isinstance(location, dict):
         location = {}
+
+    # ========================================================
+    # NAME
+    # ========================================================
 
     first_name = (
         contact.get("firstName")
@@ -497,23 +503,125 @@ def normalize_contact(contact):
         or f"{first_name} {last_name}".strip()
     )
 
-    title = (
+    # ========================================================
+    # JOB TITLE
+    # ========================================================
+
+    raw_job_title = (
         contact.get("jobTitle")
         or contact.get("job_title")
         or contact.get("title")
         or ""
     )
 
+    # Lusha can return jobTitle as an object
+    if isinstance(raw_job_title, dict):
+
+        title = (
+            raw_job_title.get("title")
+            or raw_job_title.get("name")
+            or ""
+        )
+
+        departments = (
+            raw_job_title.get("departments")
+            or []
+        )
+
+        seniority = (
+            raw_job_title.get("seniority")
+            or ""
+        )
+
+    else:
+
+        title = str(raw_job_title)
+
+        departments = (
+            contact.get("departments")
+            or []
+        )
+
+        seniority = (
+            contact.get("seniority")
+            or ""
+        )
+
+    # ========================================================
+    # DEPARTMENT
+    # ========================================================
+
+    if isinstance(departments, list):
+
+        department = ", ".join(
+            str(x)
+            for x in departments
+            if x
+        )
+
+    else:
+
+        department = str(
+            departments or ""
+        )
+
+    # ========================================================
+    # SENIORITY
+    # ========================================================
+
+    if isinstance(seniority, str):
+
+        seniority = seniority.replace(
+            "_",
+            " "
+        ).title()
+
+    else:
+
+        seniority = str(
+            seniority or ""
+        )
+
+    # ========================================================
+    # LINKEDIN
+    # ========================================================
+
+    social_links = contact.get("socialLinks", {})
+
+    if not isinstance(social_links, dict):
+        social_links = {}
+
     linkedin = (
-        contact.get("linkedin")
+        social_links.get("linkedin")
+        or contact.get("linkedin")
         or contact.get("linkedinUrl")
         or contact.get("linkedin_url")
         or ""
     )
 
+    linkedin_id = ""
+
+    if linkedin:
+        linkedin_match = re.search(
+            r"linkedin\.com/in/([^/?#]+)",
+            str(linkedin),
+            re.IGNORECASE
+        )
+
+        if linkedin_match:
+            linkedin_id = linkedin_match.group(1)
+
+    # ========================================================
+    # PERSONA
+    # ========================================================
+
     qualified, persona, reason = classify_persona(
         title
     )
+
+    # ========================================================
+    # RETURN
+    # ========================================================
 
     return {
 
@@ -523,15 +631,9 @@ def normalize_contact(contact):
 
         "Persona": persona,
 
-        "Department": (
-            contact.get("department")
-            or ""
-        ),
+        "Department": department,
 
-        "Seniority": (
-            contact.get("seniority")
-            or ""
-        ),
+        "Seniority": seniority,
 
         "Company": (
             company.get("name")
@@ -564,6 +666,8 @@ def normalize_contact(contact):
         ),
 
         "LinkedIn": linkedin,
+
+        "LinkedIn ID": linkedin_id,
 
         "Contact ID": (
             contact.get("id")
@@ -1086,14 +1190,21 @@ if "company_matches" in st.session_state:
                     "Employee State",
                     "Employee Country",
                     "LinkedIn",
+                    "LinkedIn ID",
                     "Reason"
                 ]
 
                 st.dataframe(
                     qualified[columns],
                     use_container_width=True,
-                    hide_index=True
-                )
+                    hide_index=True,
+                    column_config={
+                        "LinkedIn": st.column_config.LinkColumn(
+                            "LinkedIn",
+                    display_text="Open LinkedIn"
+        )
+    }
+)
 
                 csv = qualified[
                     columns
@@ -1151,12 +1262,18 @@ if "company_matches" in st.session_state:
                     ]
 
                     st.dataframe(
-                        rejected[
-                            rejected_columns
-                        ],
-                        use_container_width=True,
-                        hide_index=True
-                    )
+    rejected[
+        rejected_columns
+    ],
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "LinkedIn": st.column_config.LinkColumn(
+            "LinkedIn",
+            display_text="Open LinkedIn"
+        )
+    }
+)
 
             # ------------------------------------------------
             # PERSONA BREAKDOWN
