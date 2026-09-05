@@ -1,277 +1,446 @@
+import os
+import re
 import requests
 import pandas as pd
 import streamlit as st
 
 
-# =========================================================
-# PAGE CONFIG
-# =========================================================
+# ============================================================
+# CONFIG
+# ============================================================
 
 st.set_page_config(
-    page_title="Persona Prospecting Dashboard",
-    page_icon="🎯",
+    page_title="IT Persona Prospecting Dashboard",
     layout="wide"
 )
 
 LUSHA_URL = "https://api.lusha.com/v3/contacts/prospecting"
 
 
-# =========================================================
-# PERSONAS
-# =========================================================
+# ============================================================
+# PERSONA DEFINITIONS
+# ============================================================
 
-PERSONA_GROUPS = {
-    "Executive Technology": [
+PERSONA_PATTERNS = {
+    "CTO / Technology Executive": [
+        r"\bcto\b",
+        r"chief technology officer",
+        r"chief technical officer",
+        r"chief technology",
+        r"chief digital officer",
+        r"chief information officer",
+        r"\bcio\b",
+        r"chief information",
+        r"chief information security officer",
+        r"\bciso\b",
+        r"chief security officer",
+        r"chief technology &",
+        r"chief technology and"
+    ],
+
+    "IT Leadership": [
+        r"\bit manager\b",
+        r"\bit director\b",
+        r"\bit head\b",
+        r"head of it",
+        r"head - it",
+        r"head, it",
+        r"head information technology",
+        r"information technology head",
+        r"information technology director",
+        r"information technology manager",
+        r"information systems manager",
+        r"information systems director",
+        r"technology director",
+        r"technology manager",
+        r"technology head",
+        r"head of technology",
+        r"director of technology",
+        r"manager of information technology",
+        r"it operations manager",
+        r"technology operations manager",
+        r"it operations director",
+        r"it service delivery manager",
+        r"it service delivery director",
+        r"it infrastructure manager",
+        r"infrastructure manager",
+        r"infrastructure director",
+        r"it lead",
+        r"technology lead",
+        r"information technology lead"
+    ],
+
+    "Infrastructure / Network": [
+        r"infrastructure manager",
+        r"infrastructure director",
+        r"infrastructure lead",
+        r"it infrastructure",
+        r"network manager",
+        r"network director",
+        r"network lead",
+        r"network architect",
+        r"network administrator",
+        r"network engineer",
+        r"systems administrator",
+        r"system administrator",
+        r"systems manager",
+        r"systems engineer",
+        r"system engineer",
+        r"server administrator",
+        r"cloud infrastructure",
+        r"cloud architect",
+        r"cloud engineer",
+        r"it infrastructure architect",
+        r"infrastructure architect"
+    ],
+
+    "Cyber Security": [
+        r"\bciso\b",
+        r"chief information security officer",
+        r"information security manager",
+        r"information security director",
+        r"information security lead",
+        r"information security architect",
+        r"cyber security manager",
+        r"cybersecurity manager",
+        r"cyber security director",
+        r"cybersecurity director",
+        r"cyber security lead",
+        r"cybersecurity lead",
+        r"security manager",
+        r"security director",
+        r"security architect",
+        r"security engineer",
+        r"network security",
+        r"information security",
+        r"cyber security",
+        r"cybersecurity",
+        r"security operations",
+        r"soc manager",
+        r"soc lead"
+    ],
+
+    "IT Operations / Support": [
+        r"it operations",
+        r"it support manager",
+        r"it support lead",
+        r"it service manager",
+        r"service desk manager",
+        r"help desk manager",
+        r"technical support manager",
+        r"technical support lead",
+        r"desktop support manager",
+        r"desktop support lead",
+        r"it administrator",
+        r"it administration",
+        r"it service"
+    ],
+
+    "IT Asset / Systems Management": [
+        r"it asset",
+        r"information technology asset",
+        r"technology asset",
+        r"asset management.*it",
+        r"it.*asset management",
+        r"software asset management",
+        r"hardware asset management",
+        r"configuration manager.*it",
+        r"systems management",
+        r"technology management"
+    ]
+}
+
+
+# ============================================================
+# EXCLUSIONS
+# ============================================================
+
+EXCLUDED_TITLE_PATTERNS = [
+    r"\baccount manager\b",
+    r"\bkey account\b",
+    r"\baccount executive\b",
+    r"\bsales\b",
+    r"\bbusiness development\b",
+    r"\bbd manager\b",
+    r"\bmarketing\b",
+    r"\bhuman resources\b",
+    r"\bhr manager\b",
+    r"\brecruiter\b",
+    r"\brecruitment\b",
+    r"\bfinance\b",
+    r"\bfinancial\b",
+    r"\baccountant\b",
+    r"\baccounts manager\b",
+    r"\blegal\b",
+    r"\bprocurement\b",
+    r"\bpurchase manager\b",
+    r"\boperations manager\b"
+]
+
+
+# ============================================================
+# PERSONA MATCHING
+# ============================================================
+
+def persona_match(title):
+    """
+    Returns:
+        (True/False, persona, reason)
+    """
+
+    if not title:
+        return False, "Unknown", "No job title"
+
+    title_clean = str(title).strip()
+    title_lower = title_clean.lower()
+
+    # --------------------------------------------------------
+    # Exclude obvious non-IT functions
+    # --------------------------------------------------------
+
+    for pattern in EXCLUDED_TITLE_PATTERNS:
+
+        # Don't blindly reject a title containing "operations".
+        # We only reject the actual generic/non-IT patterns above.
+        if re.search(pattern, title_lower):
+            return False, "Excluded", f"Non-IT title matched: {pattern}"
+
+    # --------------------------------------------------------
+    # Look for IT persona
+    # --------------------------------------------------------
+
+    for persona, patterns in PERSONA_PATTERNS.items():
+
+        for pattern in patterns:
+
+            if re.search(pattern, title_lower):
+                return True, persona, f"Matched: {pattern}"
+
+    # --------------------------------------------------------
+    # Additional intelligent IT detection
+    # --------------------------------------------------------
+
+    technology_words = [
+        "information technology",
+        "information systems",
+        "it ",
+        "technology",
+        "infrastructure",
+        "network",
+        "cybersecurity",
+        "cyber security",
+        "information security",
+        "systems administration",
+        "system administration"
+    ]
+
+    management_words = [
+        "manager",
+        "director",
+        "head",
+        "lead",
+        "chief",
+        "vp",
+        "vice president",
+        "architect"
+    ]
+
+    has_technology = any(
+        word in title_lower for word in technology_words
+    )
+
+    has_management = any(
+        word in title_lower for word in management_words
+    )
+
+    if has_technology and has_management:
+
+        return (
+            True,
+            "Technology / IT Management",
+            "Technology keyword + management/senior keyword"
+        )
+
+    return False, "Not IT", "No IT persona pattern matched"
+
+
+# ============================================================
+# LOCATION HELPERS
+# ============================================================
+
+def build_location(country, state, city):
+
+    location = {}
+
+    if country.strip():
+        location["country"] = country.strip()
+
+    if state.strip():
+        location["state"] = state.strip()
+
+    if city.strip():
+        location["city"] = city.strip()
+
+    return location
+
+
+# ============================================================
+# LUSHA SEARCH
+# ============================================================
+
+def search_lusha(
+    api_key,
+    company_name,
+    company_country="",
+    company_state="",
+    company_city="",
+    employee_country="",
+    employee_state="",
+    employee_city="",
+    page_size=50
+):
+
+    headers = {
+        "api_key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    # --------------------------------------------------------
+    # BROADER JOB TITLE SEARCH
+    #
+    # We intentionally include many variants so that
+    # Lusha doesn't eliminate valid people before our
+    # Python classifier gets a chance to evaluate them.
+    # --------------------------------------------------------
+
+    broad_job_titles = [
         "CTO",
         "Chief Technology Officer",
         "CIO",
         "Chief Information Officer",
         "CISO",
         "Chief Information Security Officer",
-        "Chief Technology & Information Officer",
-        "Chief Information & Technology Officer",
-    ],
+        "Chief Security Officer",
 
-    "IT Leadership": [
         "IT Manager",
         "IT Director",
-        "Director of IT",
+        "IT Head",
         "Head of IT",
         "Head IT",
-        "Head of Information Technology",
+
+        "Technology Manager",
+        "Technology Director",
+        "Technology Head",
+        "Head of Technology",
+        "Director of Technology",
+
         "Information Technology Manager",
         "Information Technology Director",
-        "Technology Director",
-        "Technology Manager",
-        "Head of Technology",
-        "VP IT",
-        "VP of IT",
-        "Vice President IT",
-        "Vice President of IT",
-    ],
+        "Information Technology Head",
+        "Information Technology Lead",
 
-    "Infrastructure / Network": [
+        "Information Systems Manager",
+        "Information Systems Director",
+        "Information Systems Head",
+
+        "IT Operations Manager",
+        "IT Operations Director",
+        "Technology Operations Manager",
+
+        "IT Infrastructure Manager",
         "Infrastructure Manager",
         "Infrastructure Director",
-        "Head of Infrastructure",
+        "Infrastructure Lead",
+
         "Network Manager",
         "Network Director",
-        "Network Administrator",
+        "Network Lead",
         "Network Architect",
-        "Network Security Architect",
-        "Infrastructure Architect",
+        "Network Engineer",
+        "Network Administrator",
+
         "Systems Administrator",
         "System Administrator",
         "Systems Manager",
-        "System Manager",
-    ],
+        "Systems Engineer",
 
-    "Cyber Security": [
         "Security Manager",
         "Security Director",
-        "Head of Security",
+        "Security Architect",
+        "Security Engineer",
+
         "Information Security Manager",
         "Information Security Director",
-        "Head of Information Security",
-        "Cyber Security Manager",
+        "Information Security Lead",
+
         "Cybersecurity Manager",
-        "Cyber Security Director",
         "Cybersecurity Director",
-        "Security Architect",
-        "Cyber Security Architect",
-        "Cybersecurity Architect",
+        "Cybersecurity Lead",
+
+        "IT Asset Manager",
+        "IT Asset Management",
+        "Information Technology Asset Management",
+
+        "IT Service Manager",
+        "IT Service Delivery Manager",
+        "IT Support Manager",
+        "IT Support Lead",
+        "Technical Support Manager"
     ]
-}
-
-
-# =========================================================
-# HELPERS
-# =========================================================
-
-def normalize(value):
-    return " ".join(
-        str(value).lower().strip().split()
-    )
-
-
-def persona_match(title):
-    """
-    Our own strict persona qualification.
-    This prevents broad Lusha matches such as
-    Account Manager from becoming IT leads.
-    """
-
-    title = normalize(title)
-
-    for group, titles in PERSONA_GROUPS.items():
-
-        for allowed in titles:
-
-            if title == normalize(allowed):
-                return True, group
-
-    # Controlled partial matches
-    patterns = {
-        "IT Leadership": [
-            "it manager",
-            "it director",
-            "director of it",
-            "head of it",
-            "head it",
-            "head of information technology",
-            "information technology manager",
-            "information technology director",
-            "technology director",
-            "technology manager",
-            "head of technology",
-        ],
-
-        "Infrastructure / Network": [
-            "infrastructure manager",
-            "infrastructure director",
-            "head of infrastructure",
-            "network manager",
-            "network director",
-            "network architect",
-            "network security architect",
-            "infrastructure architect",
-            "systems administrator",
-            "system administrator",
-        ],
-
-        "Cyber Security": [
-            "security manager",
-            "security director",
-            "head of security",
-            "information security manager",
-            "information security director",
-            "head of information security",
-            "cyber security manager",
-            "cybersecurity manager",
-            "cyber security director",
-            "cybersecurity director",
-            "security architect",
-            "cyber security architect",
-            "cybersecurity architect",
-        ],
-
-        "Executive Technology": [
-            "chief technology officer",
-            "chief information officer",
-            "chief information security officer",
-        ]
-    }
-
-    # Explicit exclusions
-    if any(x in title for x in [
-        "account manager",
-        "sales manager",
-        "business development",
-        "marketing manager",
-        "hr manager",
-        "human resources",
-        "finance manager",
-    ]):
-        return False, None
-
-    for group, patterns_list in patterns.items():
-
-        for pattern in patterns_list:
-
-            if pattern in title:
-                return True, group
-
-    return False, None
-
-
-# =========================================================
-# LUSHA SEARCH
-# =========================================================
-
-def search_lusha(
-    api_key,
-    company_name,
-    company_country,
-    company_state,
-    company_city,
-    selected_titles,
-    person_country=None,
-    person_state=None,
-    person_city=None,
-):
-
-    headers = {
-        "api_key": api_key,
-        "Content-Type": "application/json"
-    }
-
-    # -----------------------------------------------------
-    # CONTACT FILTER
-    # -----------------------------------------------------
 
     contact_include = {
-        "jobTitles": selected_titles
+        "jobTitles": broad_job_titles
     }
 
-    # Optional PERSON LOCATION
-    if person_country or person_state or person_city:
+    # --------------------------------------------------------
+    # Employee location
+    # --------------------------------------------------------
 
-        person_location = {}
+    employee_location = build_location(
+        employee_country,
+        employee_state,
+        employee_city
+    )
 
-        if person_country:
-            person_location["country"] = person_country
-
-        if person_state:
-            person_location["state"] = person_state
-
-        if person_city:
-            person_location["city"] = person_city
-
+    if employee_location:
         contact_include["locations"] = [
-            person_location
+            employee_location
         ]
 
-    # -----------------------------------------------------
-    # COMPANY FILTER
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # Company filters
+    # --------------------------------------------------------
 
-    company_include = {
-        "names": [
-            company_name
+    company_include = {}
+
+    if company_name.strip():
+        company_include["names"] = [
+            company_name.strip()
         ]
-    }
 
-    # Company location is deliberately separate
-    # from employee location.
-    if company_country or company_state or company_city:
+    company_location = build_location(
+        company_country,
+        company_state,
+        company_city
+    )
 
-        company_location = {}
-
-        if company_country:
-            company_location["country"] = company_country
-
-        if company_state:
-            company_location["state"] = company_state
-
-        if company_city:
-            company_location["city"] = company_city
-
+    if company_location:
         company_include["locations"] = [
             company_location
         ]
 
-    # -----------------------------------------------------
-    # FINAL PAYLOAD
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # Payload
+    # --------------------------------------------------------
 
     payload = {
         "pagination": {
             "page": 0,
-            "size": 50
+            "size": page_size
         },
 
         "filters": {
-
             "contacts": {
                 "include": contact_include
             },
@@ -282,659 +451,560 @@ def search_lusha(
         }
     }
 
-    try:
+    # --------------------------------------------------------
+    # API CALL
+    # --------------------------------------------------------
 
-        response = requests.post(
-            LUSHA_URL,
-            headers=headers,
-            json=payload,
-            timeout=60
-        )
-
-    except requests.exceptions.RequestException as e:
-
-        return None, f"Connection error: {e}"
-
-    # -----------------------------------------------------
-    # ERROR HANDLING
-    # -----------------------------------------------------
-
-    if response.status_code != 200:
-
-        try:
-            error_data = response.json()
-
-        except Exception:
-            error_data = response.text
-
-        return None, (
-            f"Lusha API returned "
-            f"{response.status_code}\n\n"
-            f"{error_data}"
-        )
-
-    try:
-
-        return response.json(), None
-
-    except Exception:
-
-        return None, "Lusha returned invalid JSON."
-
-
-# =========================================================
-# PROCESS RESULTS
-# =========================================================
-
-def process_results(data):
-
-    rows = []
-
-    for person in data.get("results", []):
-
-        first_name = person.get(
-            "firstName",
-            ""
-        )
-
-        last_name = person.get(
-            "lastName",
-            ""
-        )
-
-        name = (
-            f"{first_name} {last_name}"
-        ).strip()
-
-        job = person.get(
-            "jobTitle",
-            {}
-        ) or {}
-
-        title = job.get(
-            "title",
-            ""
-        )
-
-        departments = job.get(
-            "departments",
-            []
-        )
-
-        seniority = job.get(
-            "seniority",
-            ""
-        )
-
-        company = person.get(
-            "company",
-            {}
-        ) or {}
-
-        company_name = company.get(
-            "name",
-            ""
-        )
-
-        company_domain = company.get(
-            "domain",
-            ""
-        )
-
-        location = person.get(
-            "location",
-            {}
-        ) or {}
-
-        city = location.get(
-            "city",
-            ""
-        )
-
-        state = location.get(
-            "state",
-            ""
-        )
-
-        country = location.get(
-            "country",
-            ""
-        )
-
-        social = person.get(
-            "socialLinks",
-            {}
-        ) or {}
-
-        linkedin = social.get(
-            "linkedin",
-            ""
-        )
-
-        valid, persona = persona_match(
-            title
-        )
-
-        if valid:
-            status = "QUALIFIED"
-        else:
-            status = "REJECTED"
-
-        rows.append({
-
-            "Name": name,
-
-            "Current Title": title,
-
-            "Persona": persona or "",
-
-            "Department": ", ".join(
-                departments
-            ),
-
-            "Seniority": seniority,
-
-            "Company": company_name,
-
-            "Company Domain": company_domain,
-
-            "Employee City": city,
-
-            "Employee State": state,
-
-            "Employee Country": country,
-
-            "LinkedIn": linkedin,
-
-            "Status": status,
-
-            "Lusha ID": person.get(
-                "id",
-                ""
-            )
-        })
-
-    return pd.DataFrame(rows)
-
-
-# =========================================================
-# SIDEBAR
-# =========================================================
-
-st.title("🎯 Persona Prospecting Dashboard")
-
-st.write(
-    "Find IT, Technology, Infrastructure and Cybersecurity "
-    "employees at a specific company and company location."
-)
-
-st.divider()
-
-
-with st.sidebar:
-
-    st.header("⚙️ Configuration")
-
-    api_key = st.text_input(
-        "Lusha API Key",
-        type="password"
+    response = requests.post(
+        LUSHA_URL,
+        headers=headers,
+        json=payload,
+        timeout=60
     )
 
-    st.divider()
-
-    st.subheader("Persona Groups")
-
-    selected_groups = []
-
-    for group in PERSONA_GROUPS:
-
-        checked = st.checkbox(
-            group,
-            value=True
-        )
-
-        if checked:
-            selected_groups.append(group)
+    return response, payload
 
 
-# =========================================================
-# COMPANY FILTERS
-# =========================================================
+# ============================================================
+# EXTRACT CONTACTS
+# ============================================================
 
-st.subheader("🏢 Company")
+def extract_contacts(data):
 
-col1, col2 = st.columns(2)
+    if not isinstance(data, dict):
+        return []
 
-with col1:
+    # Lusha responses can expose results in different structures.
+    possible_keys = [
+        "contacts",
+        "results",
+        "data"
+    ]
 
-    company_name = st.text_input(
-        "Company Name *",
-        value="Denave",
-        placeholder="e.g. Denave"
+    for key in possible_keys:
+
+        value = data.get(key)
+
+        if isinstance(value, list):
+            return value
+
+        if isinstance(value, dict):
+
+            for nested_key in [
+                "contacts",
+                "results",
+                "data"
+            ]:
+
+                nested_value = value.get(nested_key)
+
+                if isinstance(nested_value, list):
+                    return nested_value
+
+    return []
+
+
+# ============================================================
+# NORMALIZE CONTACT
+# ============================================================
+
+def normalize_contact(contact):
+
+    if not isinstance(contact, dict):
+        return {}
+
+    company = contact.get("company")
+
+    if not isinstance(company, dict):
+        company = {}
+
+    location = contact.get("location")
+
+    if not isinstance(location, dict):
+        location = {}
+
+    first_name = (
+        contact.get("firstName")
+        or contact.get("first_name")
+        or ""
     )
 
-    company_country = st.text_input(
-        "Company Country",
-        value="India",
-        placeholder="e.g. India"
+    last_name = (
+        contact.get("lastName")
+        or contact.get("last_name")
+        or ""
     )
 
-with col2:
-
-    company_state = st.text_input(
-        "Company State",
-        value="Uttar Pradesh",
-        placeholder="e.g. Uttar Pradesh"
+    name = (
+        contact.get("name")
+        or f"{first_name} {last_name}".strip()
     )
 
-    company_city = st.text_input(
-        "Company City",
-        value="Noida",
-        placeholder="e.g. Noida"
+    title = (
+        contact.get("jobTitle")
+        or contact.get("job_title")
+        or contact.get("title")
+        or ""
     )
 
+    linkedin = (
+        contact.get("linkedin")
+        or contact.get("linkedinUrl")
+        or contact.get("linkedin_url")
+        or ""
+    )
+
+    company_name = (
+        company.get("name")
+        or contact.get("companyName")
+        or ""
+    )
+
+    company_domain = (
+        company.get("domain")
+        or contact.get("companyDomain")
+        or ""
+    )
+
+    city = (
+        location.get("city")
+        or contact.get("city")
+        or ""
+    )
+
+    state = (
+        location.get("state")
+        or contact.get("state")
+        or ""
+    )
+
+    country = (
+        location.get("country")
+        or contact.get("country")
+        or ""
+    )
+
+    department = (
+        contact.get("department")
+        or ""
+    )
+
+    seniority = (
+        contact.get("seniority")
+        or ""
+    )
+
+    contact_id = (
+        contact.get("id")
+        or contact.get("contactId")
+        or ""
+    )
+
+    qualified, persona, reason = persona_match(title)
+
+    return {
+        "Name": name,
+        "Current Title": title,
+        "Persona": persona,
+        "Department": department,
+        "Seniority": seniority,
+        "Company": company_name,
+        "Company Domain": company_domain,
+        "Employee City": city,
+        "Employee State": state,
+        "Employee Country": country,
+        "LinkedIn": linkedin,
+        "Contact ID": contact_id,
+        "Qualified": qualified,
+        "Reason": reason
+    }
+
+
+# ============================================================
+# UI
+# ============================================================
+
+st.title("🎯 IT Persona Prospecting Dashboard")
 
 st.caption(
-    "🏢 Company location filters the company's HQ/site location. "
-    "It is separate from the employee's personal location."
+    "Find technology, IT, infrastructure, network and cybersecurity "
+    "personas using Lusha."
+)
+
+st.warning(
+    "Important: Lusha search results are not independent proof of "
+    "current employment. This dashboard separates Lusha discovery "
+    "from our persona qualification."
 )
 
 
-# =========================================================
-# PERSON LOCATION
-# =========================================================
+# ============================================================
+# API KEY
+# ============================================================
 
-st.subheader("👤 Employee Location")
+st.sidebar.header("Lusha")
 
-use_person_location = st.checkbox(
-    "Also filter employees by their location"
+api_key = st.sidebar.text_input(
+    "Lusha API Key",
+    type="password",
+    value=os.getenv("LUSHA_API_KEY", "")
 )
 
-person_country = ""
-person_state = ""
-person_city = ""
-
-if use_person_location:
-
-    p1, p2, p3 = st.columns(3)
-
-    with p1:
-
-        person_country = st.text_input(
-            "Employee Country",
-            placeholder="India"
-        )
-
-    with p2:
-
-        person_state = st.text_input(
-            "Employee State",
-            placeholder="Uttar Pradesh"
-        )
-
-    with p3:
-
-        person_city = st.text_input(
-            "Employee City",
-            placeholder="Noida"
-        )
-
-else:
-
-    st.info(
-        "Employee location filtering is OFF. "
-        "This means a relevant employee can be returned "
-        "even if their personal location differs from the "
-        "company's location."
-    )
-
-
-# =========================================================
-# PERSONAS
-# =========================================================
-
-selected_titles = []
-
-for group in selected_groups:
-
-    selected_titles.extend(
-        PERSONA_GROUPS[group]
-    )
-
-selected_titles = list(
-    dict.fromkeys(selected_titles)
+st.sidebar.markdown(
+    "Your API key is used only for the API request."
 )
 
-st.subheader("🎯 Search Criteria")
 
-st.write(
-    f"**{len(selected_titles)} persona titles selected**"
+# ============================================================
+# COMPANY
+# ============================================================
+
+st.sidebar.header("Company")
+
+company_name = st.sidebar.text_input(
+    "Company Name",
+    placeholder="e.g. Denave"
 )
 
-with st.expander("Show persona titles"):
+company_country = st.sidebar.text_input(
+    "Company Country",
+    value="India"
+)
 
-    for title in selected_titles:
+company_state = st.sidebar.text_input(
+    "Company State",
+    placeholder="e.g. Karnataka"
+)
 
-        st.write(
-            f"• {title}"
-        )
+company_city = st.sidebar.text_input(
+    "Company City",
+    placeholder="e.g. Bangalore"
+)
 
 
-# =========================================================
-# SEARCH BUTTON
-# =========================================================
+# ============================================================
+# EMPLOYEE LOCATION
+# ============================================================
 
-search = st.button(
-    "🔎 FIND CURRENT IT EMPLOYEES",
+st.sidebar.header("Employee Location")
+
+employee_country = st.sidebar.text_input(
+    "Employee Country",
+    placeholder="Optional"
+)
+
+employee_state = st.sidebar.text_input(
+    "Employee State",
+    placeholder="Optional"
+)
+
+employee_city = st.sidebar.text_input(
+    "Employee City",
+    placeholder="Optional"
+)
+
+
+# ============================================================
+# SEARCH
+# ============================================================
+
+search_button = st.sidebar.button(
+    "🔎 Search Personas",
     type="primary",
     use_container_width=True
 )
 
 
-# =========================================================
-# EXECUTE
-# =========================================================
+if search_button:
 
-if search:
+    if not api_key.strip():
 
-    if not api_key:
-
-        st.error(
-            "Enter your Lusha API key first."
-        )
+        st.error("Please enter your Lusha API key.")
 
         st.stop()
 
     if not company_name.strip():
 
+        st.error("Please enter a company name.")
+
+        st.stop()
+
+    with st.spinner("Searching Lusha..."):
+
+        try:
+
+            response, payload = search_lusha(
+                api_key=api_key,
+                company_name=company_name,
+                company_country=company_country,
+                company_state=company_state,
+                company_city=company_city,
+                employee_country=employee_country,
+                employee_state=employee_state,
+                employee_city=employee_city,
+                page_size=50
+            )
+
+        except requests.RequestException as e:
+
+            st.error(
+                f"Network/API connection error: {e}"
+            )
+
+            st.stop()
+
+    # ========================================================
+    # API ERROR
+    # ========================================================
+
+    if response.status_code != 200:
+
         st.error(
-            "Company name is required."
+            f"Lusha API returned HTTP {response.status_code}"
         )
+
+        try:
+            error_json = response.json()
+
+            st.json(error_json)
+
+        except Exception:
+
+            st.code(response.text)
+
+        st.subheader("Request Payload")
+
+        st.json(payload)
 
         st.stop()
 
-    if not selected_titles:
+    # ========================================================
+    # RESPONSE
+    # ========================================================
 
-        st.error(
-            "Select at least one persona group."
-        )
+    try:
 
-        st.stop()
+        data = response.json()
 
-    with st.spinner(
-        "Searching Lusha..."
-    ):
+    except Exception:
 
-        data, error = search_lusha(
+        st.error("Lusha returned an invalid JSON response.")
 
-            api_key=api_key,
-
-            company_name=company_name.strip(),
-
-            company_country=company_country.strip(),
-
-            company_state=company_state.strip(),
-
-            company_city=company_city.strip(),
-
-            selected_titles=selected_titles,
-
-            person_country=person_country.strip()
-            if use_person_location
-            else None,
-
-            person_state=person_state.strip()
-            if use_person_location
-            else None,
-
-            person_city=person_city.strip()
-            if use_person_location
-            else None,
-        )
-
-    if error:
-
-        st.error(error)
+        st.code(response.text)
 
         st.stop()
 
-    # -----------------------------------------------------
-    # RESPONSE INFO
-    # -----------------------------------------------------
+    contacts = extract_contacts(data)
 
-    pagination = data.get(
-        "pagination",
-        {}
-    )
+    # ========================================================
+    # NORMALIZE
+    # ========================================================
 
-    total = pagination.get(
-        "total",
-        0
-    )
+    normalized = []
 
-    returned = len(
-        data.get(
-            "results",
-            []
-        )
-    )
+    for contact in contacts:
 
-    st.success(
-        f"Search successful — "
-        f"{returned} contacts returned."
-    )
+        row = normalize_contact(contact)
 
-    # -----------------------------------------------------
-    # PROCESS
-    # -----------------------------------------------------
+        if row:
+            normalized.append(row)
 
-    df = process_results(
-        data
-    )
+    df = pd.DataFrame(normalized)
 
-    if df.empty:
-
-        st.warning(
-            "No contacts found."
-        )
-
-        st.stop()
-
-    qualified = df[
-        df["Status"] == "QUALIFIED"
-    ].copy()
-
-    rejected = df[
-        df["Status"] == "REJECTED"
-    ].copy()
-
-    # -----------------------------------------------------
+    # ========================================================
     # METRICS
-    # -----------------------------------------------------
+    # ========================================================
 
-    a, b, c, d = st.columns(4)
+    returned_count = len(df)
 
-    with a:
+    if returned_count:
 
-        st.metric(
-            "Lusha Matches",
-            total
-        )
+        qualified_df = df[
+            df["Qualified"] == True
+        ].copy()
 
-    with b:
+        rejected_df = df[
+            df["Qualified"] == False
+        ].copy()
 
-        st.metric(
-            "Returned",
-            returned
-        )
+    else:
 
-    with c:
+        qualified_df = pd.DataFrame()
+        rejected_df = pd.DataFrame()
 
-        st.metric(
-            "Qualified IT",
-            len(qualified)
-        )
+    qualified_count = len(qualified_df)
+    rejected_count = len(rejected_df)
 
-    with d:
-
-        match_rate = (
-            len(qualified) /
-            len(df) *
-            100
-        ) if len(df) else 0
-
-        st.metric(
-            "Qualification Rate",
-            f"{match_rate:.0f}%"
-        )
-
-    st.divider()
-
-    # =====================================================
-    # QUALIFIED
-    # =====================================================
+    # ========================================================
+    # HEADER
+    # ========================================================
 
     st.subheader(
-        "✅ Qualified IT / Technology Employees"
+        f"Results for {company_name}"
     )
 
-    if qualified.empty:
+    col1, col2, col3, col4 = st.columns(4)
 
-        st.warning(
-            "No returned contacts passed our strict "
-            "IT persona qualification."
+    col1.metric(
+        "Lusha Contacts Returned",
+        returned_count
+    )
+
+    col2.metric(
+        "Qualified IT Personas",
+        qualified_count
+    )
+
+    col3.metric(
+        "Rejected",
+        rejected_count
+    )
+
+    if returned_count:
+
+        qualification_rate = (
+            qualified_count / returned_count
+        ) * 100
+
+    else:
+
+        qualification_rate = 0
+
+    col4.metric(
+        "Qualification Rate",
+        f"{qualification_rate:.1f}%"
+    )
+
+    # ========================================================
+    # ZERO RESULT EXPLANATION
+    # ========================================================
+
+    if returned_count == 0:
+
+        st.error(
+            "Lusha returned 0 contacts for this query."
+        )
+
+        st.info(
+            "This does NOT prove that the company has no IT "
+            "personas. It means Lusha returned no contacts "
+            "matching the current search filters."
+        )
+
+        st.subheader("Search Used")
+
+        st.json(payload)
+
+    # ========================================================
+    # QUALIFIED PERSONAS
+    # ========================================================
+
+    if qualified_count:
+
+        st.subheader(
+            f"✅ Qualified IT Personas ({qualified_count})"
+        )
+
+        display_columns = [
+            "Name",
+            "Current Title",
+            "Persona",
+            "Department",
+            "Seniority",
+            "Company",
+            "Company Domain",
+            "Employee City",
+            "Employee State",
+            "Employee Country",
+            "LinkedIn",
+            "Reason"
+        ]
+
+        st.dataframe(
+            qualified_df[display_columns],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # ----------------------------------------------------
+        # CSV
+        # ----------------------------------------------------
+
+        csv = qualified_df[
+            display_columns
+        ].to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            "⬇️ Download Qualified Personas CSV",
+            data=csv,
+            file_name=(
+                f"{company_name}_qualified_personas.csv"
+            ),
+            mime="text/csv"
         )
 
     else:
 
-        columns = [
-
-            "Name",
-
-            "Current Title",
-
-            "Persona",
-
-            "Department",
-
-            "Seniority",
-
-            "Company",
-
-            "Company Domain",
-
-            "Employee City",
-
-            "Employee State",
-
-            "Employee Country",
-
-            "LinkedIn",
-
-            "Status"
-        ]
-
-        st.dataframe(
-
-            qualified[columns],
-
-            use_container_width=True,
-
-            hide_index=True,
-
-            column_config={
-
-                "LinkedIn":
-                    st.column_config.LinkColumn(
-                        "LinkedIn",
-                        display_text="Open LinkedIn"
-                    )
-            }
+        st.warning(
+            "No returned contacts passed our IT-persona classifier."
         )
 
-        csv = qualified.to_csv(
-            index=False
-        ).encode(
-            "utf-8"
-        )
-
-        st.download_button(
-
-            "⬇️ Download Qualified CSV",
-
-            data=csv,
-
-            file_name=(
-                f"{company_name}_"
-                f"IT_personas.csv"
-            ),
-
-            mime="text/csv"
-        )
-
-
-    # =====================================================
+    # ========================================================
     # REJECTED
-    # =====================================================
+    # ========================================================
 
-    with st.expander(
-        f"❌ Rejected contacts ({len(rejected)})"
-    ):
+    if rejected_count:
 
-        if rejected.empty:
-
-            st.write(
-                "No rejected contacts."
-            )
-
-        else:
+        with st.expander(
+            f"❌ Rejected Contacts ({rejected_count})"
+        ):
 
             rejected_columns = [
-
                 "Name",
-
                 "Current Title",
-
-                "Department",
-
                 "Company",
-
-                "Employee City",
-
-                "Employee State",
-
-                "Employee Country",
-
-                "LinkedIn",
-
-                "Status"
+                "Department",
+                "Reason",
+                "LinkedIn"
             ]
 
             st.dataframe(
-
-                rejected[rejected_columns],
-
+                rejected_df[rejected_columns],
                 use_container_width=True,
-
-                hide_index=True,
-
-                column_config={
-
-                    "LinkedIn":
-                        st.column_config.LinkColumn(
-                            "LinkedIn",
-                            display_text="Open LinkedIn"
-                        )
-                }
+                hide_index=True
             )
 
+    # ========================================================
+    # PERSONA BREAKDOWN
+    # ========================================================
 
-    # =====================================================
-    # RAW API RESPONSE
-    # =====================================================
+    if qualified_count:
 
-    with st.expander(
-        "🔧 Debug — Raw Lusha Response"
-    ):
+        st.subheader("Persona Breakdown")
+
+        persona_counts = (
+            qualified_df["Persona"]
+            .value_counts()
+            .rename_axis("Persona")
+            .reset_index(name="Contacts")
+        )
+
+        st.dataframe(
+            persona_counts,
+            use_container_width=True,
+            hide_index=True
+        )
+
+    # ========================================================
+    # RAW DATA
+    # ========================================================
+
+    with st.expander("🔧 Debug / Raw Lusha Response"):
+
+        st.subheader("Request Payload")
+
+        st.json(payload)
+
+        st.subheader("Raw Response")
 
         st.json(data)
